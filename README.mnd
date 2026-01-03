@@ -1,0 +1,167 @@
+# Math Worksheets Generator
+
+A web-based tool for generating printable math worksheets as PDFs.
+
+The application lets you define allowed values, operators, and constraints, then generates one or more worksheet pages with optional answer keys. It is designed to be simple, fast, and usable on both desktop and mobile browsers.
+
+Live site (when deployed):
+https://mathworksheets.se
+
+---
+
+## Features
+
+- Generate worksheets as PDF
+- 3 columns × 20 problems per page (60 per page)
+- Optional answers page after each worksheet
+- Supports multiple pages (worksheet + answers per page set)
+- Operators:
+  - +, -, *, /
+  - •, ×, ÷
+- Flexible number input:
+  - Ranges: 0-10, -10--5
+  - Lists: 1 3 5, 6-10, 100, -99
+  - Decimals: .1 .25 3.5
+- Optional constraints:
+  - Non-negative subtraction results
+  - Integer-only division results
+- Monospaced (Courier) layout, print-friendly
+- Automatic fallback to defaults if inputs are invalid
+
+---
+
+## How It Works
+
+1. Open the website in your browser
+2. Fill in the form:
+   - Allowed values for a and b
+   - Operators
+   - Number of pages
+   - Optional constraints
+3. Click “Generate PDF”
+4. A PDF is generated server-side and downloaded to your computer
+
+No data is stored.
+
+---
+
+## Input Format
+
+### Allowed values for a / b
+
+You can combine ranges and explicit values.
+
+Examples:
+
+0-10
+-10--5
+1 3 5
+6-10, 100, -99
+.1 .2 .5 1.25
+
+Notes:
+- Ranges must use integer endpoints
+- Values can be separated by spaces and/or commas
+- Invalid input falls back to defaults automatically
+
+---
+
+### Operators
+
+Supported operators:
+
++  -  *  /  •  ×  ÷
+
+Examples:
+
++
++-×÷
++,-,•,×,÷
++++++-/*
+
+Repeated operators act as weights (e.g. “+++++-/*” favors addition).
+
+---
+
+### Pages
+
+- Each page contains 60 problems
+- If “answers” is checked:
+  - Each worksheet page is followed by its answers page
+- Maximum pages: 200
+  - With answers enabled → up to 400 PDF pages
+
+---
+
+## PDF Layout
+
+- Header: custom text (Courier)
+- Footer:
+  - Left: current date
+  - Right: page number
+- Problems and answers are monospaced and aligned for printing
+
+---
+
+## Tech Stack
+
+- Python
+- Flask
+- ReportLab (PDF generation)
+- Gunicorn (production server)
+- Render (hosting)
+
+---
+
+## Local Development
+
+Requirements:
+
+Python 3.10+
+
+Install dependencies:
+
+pip install -r requirements.txt
+
+Run locally:
+
+python app.py
+
+Open in browser:
+
+http://127.0.0.1:5000
+
+---
+
+## Deployment (Render)
+
+The app is designed to be deployed as a Render Web Service.
+
+Render configuration:
+
+Build command:
+pip install -r requirements.txt
+
+Start command:
+gunicorn app:app
+
+Custom domain and HTTPS are handled by Render.
+
+---
+
+## Project Status
+
+This project is stable and production-ready for personal, educational, and small-scale public use.
+
+Future improvements may include:
+- Presets (grade levels)
+- PDF preview
+- Usage limits / rate limiting
+- UI polish
+
+---
+
+## License
+
+This project is intended for personal and educational use.
+No warranty is provided.
