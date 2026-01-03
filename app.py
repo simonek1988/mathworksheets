@@ -238,7 +238,7 @@ HTML = r"""
 
         <div>
           <label for="pages">Number of pages</label>
-          <input id="pages" name="pages" type="number" min="1" max="100" value="{{defaults.pages}}" />
+          <input id="pages" name="pages" type="number" min="1" max="10" value="{{defaults.pages}}" />
           <div class="hint">Each page contains 60 problems.</div>
         </div>
 
@@ -776,7 +776,7 @@ def generate():
         avoid_negative = request.form.get("avoid_negative") is not None
         integer_division = request.form.get("integer_division") is not None
 
-        pages = safe_int(pages_raw, d["pages"], lo=1, hi=100)
+        pages = safe_int(pages_raw, d["pages"], lo=1, hi=10)
         header = safe_header(header_raw, d["title"])
 
         pdf_bytes = build_pdf(
