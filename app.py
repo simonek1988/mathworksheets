@@ -180,13 +180,13 @@ HTML = r"""
     <div class="panel">
       <form method="post" action="/generate">
         <div>
-          <label for="a">Allowed values for a</label>
+          <label for="a">Allowed values for first number</label>
           <input id="a" name="a" type="text" value="{{defaults.a}}" />
           <div class="hint">Examples: <code>0-10</code>, <code>-10--5</code>, <code> .1 -.2 .3 .456</code></div>
         </div>
 
         <div>
-          <label for="b">Allowed values for b</label>
+          <label for="b">Allowed values for second number</label>
           <input id="b" name="b" type="text" value="{{defaults.b}}" />
           <div class="hint">Examples: <code>6-10, 100, -99, .1</code>, <code>3</code></div>
         </div>
