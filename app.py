@@ -301,6 +301,7 @@ NUM_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 RANGE_RE = re.compile(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*-\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$")
 
 Problem = Tuple[float, str, float]  # (a, op_symbol, b)
+SAME_OP_TRIES = 10
 
 OP_SYMBOLS = {"+", "-", "*", "/", "•", "×", "÷"}
 OP_TO_INTERNAL = {
@@ -422,21 +423,49 @@ def pick_problem(
     avoid_negative: bool,
     integer_division: bool,
     tries: int = 50_000,
+    same_op_tries: int = 10,
 ) -> Problem:
-    for _ in range(tries):
-        op_symbol = random.choice(ops)
-        a = random.choice(a_vals)
-        b = random.choice(b_vals)
+    """
+    Mitigate operator imbalance when constraints discard many candidates for a given op
+    (e.g. integer division).
 
+    Strategy:
+      1) Pick an operator according to ops weights (ops list may contain duplicates).
+      2) Try `same_op_tries` times to find a valid (a, b) for that operator.
+      3) If not found, fall back to "any operator" attempts for the remaining budget.
+
+    This keeps the realized distribution closer to requested operator weights,
+    while still guaranteeing progress.
+    """
+    if not ops:
+        ops = ["+"]
+
+    def valid(a: float, op_symbol: str, b: float) -> bool:
         internal = OP_TO_INTERNAL[op_symbol]
         if internal == "/":
-            if not division_ok(a, b, require_int=integer_division):
-                continue
+            return division_ok(a, b, require_int=integer_division)
         if internal == "-" and avoid_negative:
-            if a - b < 0:
-                continue
+            return (a - b) >= 0
+        return True
 
-        return a, op_symbol, b
+    # Step 1: choose the intended operator (weighted by duplicates in `ops`)
+    op_symbol = random.choice(ops)
+
+    # Step 2: try to satisfy constraints within the same operator a few times
+    for _ in range(min(same_op_tries, tries)):
+        a = random.choice(a_vals)
+        b = random.choice(b_vals)
+        if valid(a, op_symbol, b):
+            return a, op_symbol, b
+
+    # Step 3: fallback to any operator (keeps termination robust)
+    remaining = tries - min(same_op_tries, tries)
+    for _ in range(max(0, remaining)):
+        op2 = random.choice(ops)
+        a = random.choice(a_vals)
+        b = random.choice(b_vals)
+        if valid(a, op2, b):
+            return a, op2, b
 
     raise RuntimeError(
         "Could not generate problems with these constraints.\n"
@@ -717,6 +746,7 @@ def build_pdf(
                     ops=ops,
                     avoid_negative=avoid_negative,
                     integer_division=integer_division,
+                    same_op_tries=SAME_OP_TRIES
                 )
             )
 
