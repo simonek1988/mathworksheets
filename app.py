@@ -182,7 +182,7 @@ HTML = r"""
         <div>
           <label for="a">Allowed values for a</label>
           <input id="a" name="a" type="text" value="{{defaults.a}}" />
-          <div class="hint">Examples: <code>0-10</code>, <code>-10--5</code>, <code>-1 5 3</code>, <code>.1 .2 .3 .456</code></div>
+          <div class="hint">Examples: <code>0-10</code>, <code>-10--5</code>, <code> .1 -.2 .3 .456</code></div>
         </div>
 
         <div>
