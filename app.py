@@ -118,10 +118,43 @@ HTML = r"""
       gap: 10px;
       color: var(--text);
     }
-    input[type="checkbox"]{
-      width: 16px;
-      height: 16px;
-      accent-color: white;
+    /* ASCII checkboxes */
+    .ascii-check{
+    cursor: pointer;
+    user-select: none;
+    }
+
+    .ascii-check input[type="checkbox"]{
+    /* keep it in the DOM for form submit + accessibility, but visually hide */
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+    }
+
+    .ascii-check .box{
+    display: inline-block;
+    min-width: 3ch;           /* enough for "[x]" */
+    }
+
+    .ascii-check .box::before{
+    content: "[ ]";
+    }
+
+    .ascii-check input[type="checkbox"]:checked + .box::before{
+    content: "[x]";
+    }
+
+    /* keyboard focus (tabbing) */
+    .ascii-check input[type="checkbox"]:focus + .box::before{
+    outline: 1px solid var(--border);
+    outline-offset: 2px;
+    }
+
+    /* optional: slightly dim label like AoC */
+    .ascii-check .label{
+    color: var(--text);
     }
 
     .btnrow{
@@ -210,10 +243,29 @@ HTML = r"""
 
         <div class="full">
           <div class="checks">
-            <label class="check"><input type="checkbox" name="answers" {% if defaults.answers %}checked{% endif %}/> answers</label>
-            <label class="check"><input type="checkbox" name="numbered" {% if defaults.numbered %}checked{% endif %}/> numbering</label>
-            <label class="check"><input type="checkbox" name="avoid_negative" {% if defaults.avoid_negative %}checked{% endif %}/> non-negative answers (subtraction)</label>
-            <label class="check"><input type="checkbox" name="integer_division" {% if defaults.integer_division %}checked{% endif %}/> integer answers (division)</label>
+            <label class="check ascii-check">
+                <input type="checkbox" name="answers" {% if defaults.answers %}checked{% endif %}/>
+                <span class="box" aria-hidden="true"></span>
+                <span class="label">answers</span>
+            </label>
+
+            <label class="check ascii-check">
+                <input type="checkbox" name="numbered" {% if defaults.numbered %}checked{% endif %}/>
+                <span class="box" aria-hidden="true"></span>
+                <span class="label">numbering</span>
+            </label>
+
+            <label class="check ascii-check">
+                <input type="checkbox" name="avoid_negative" {% if defaults.avoid_negative %}checked{% endif %}/>
+                <span class="box" aria-hidden="true"></span>
+                <span class="label">non-negative answers (subtraction)</span>
+            </label>
+
+            <label class="check ascii-check">
+                <input type="checkbox" name="integer_division" {% if defaults.integer_division %}checked{% endif %}/>
+                <span class="box" aria-hidden="true"></span>
+                <span class="label">integer answers (division)</span>
+            </label>
           </div>
         </div>
 
@@ -674,5 +726,8 @@ def generate():
         return render_template_string(HTML, defaults=form_defaults, error=str(e)), 400
 
 
+# if __name__ == "__main__":
+#     app.run()
+
 if __name__ == "__main__":
-    app.run()
+    app.run(host="0.0.0.0", port=5000, debug=True)
