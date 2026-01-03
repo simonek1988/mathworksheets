@@ -5,6 +5,8 @@ import io
 import random
 import re
 from datetime import datetime
+from decimal import Decimal
+from fractions import Fraction
 from typing import List, Tuple
 
 from flask import Flask, request, render_template_string, send_file
@@ -118,43 +120,41 @@ HTML = r"""
       gap: 10px;
       color: var(--text);
     }
+
     /* ASCII checkboxes */
     .ascii-check{
-    cursor: pointer;
-    user-select: none;
+      cursor: pointer;
+      user-select: none;
     }
 
     .ascii-check input[type="checkbox"]{
-    /* keep it in the DOM for form submit + accessibility, but visually hide */
-    position: absolute;
-    opacity: 0;
-    width: 1px;
-    height: 1px;
-    pointer-events: none;
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      pointer-events: none;
     }
 
     .ascii-check .box{
-    display: inline-block;
-    min-width: 3ch;           /* enough for "[x]" */
+      display: inline-block;
+      min-width: 3ch;           /* enough for "[x]" */
     }
 
     .ascii-check .box::before{
-    content: "[ ]";
+      content: "[ ]";
     }
 
     .ascii-check input[type="checkbox"]:checked + .box::before{
-    content: "[x]";
+      content: "[x]";
     }
 
-    /* keyboard focus (tabbing) */
     .ascii-check input[type="checkbox"]:focus + .box::before{
-    outline: 1px solid var(--border);
-    outline-offset: 2px;
+      outline: 1px solid var(--border);
+      outline-offset: 2px;
     }
 
-    /* optional: slightly dim label like AoC */
     .ascii-check .label{
-    color: var(--text);
+      color: var(--text);
     }
 
     .btnrow{
@@ -186,6 +186,12 @@ HTML = r"""
 
     .footer{
       margin-top: 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .site-footer{
+      margin-top: 18px;
       color: var(--muted);
       font-size: 12px;
     }
@@ -244,27 +250,27 @@ HTML = r"""
         <div class="full">
           <div class="checks">
             <label class="check ascii-check">
-                <input type="checkbox" name="answers" {% if defaults.answers %}checked{% endif %}/>
-                <span class="box" aria-hidden="true"></span>
-                <span class="label">answers</span>
+              <input type="checkbox" name="answers" {% if defaults.answers %}checked{% endif %}/>
+              <span class="box" aria-hidden="true"></span>
+              <span class="label">answers</span>
             </label>
 
             <label class="check ascii-check">
-                <input type="checkbox" name="numbered" {% if defaults.numbered %}checked{% endif %}/>
-                <span class="box" aria-hidden="true"></span>
-                <span class="label">numbering</span>
+              <input type="checkbox" name="numbered" {% if defaults.numbered %}checked{% endif %}/>
+              <span class="box" aria-hidden="true"></span>
+              <span class="label">numbering</span>
             </label>
 
             <label class="check ascii-check">
-                <input type="checkbox" name="avoid_negative" {% if defaults.avoid_negative %}checked{% endif %}/>
-                <span class="box" aria-hidden="true"></span>
-                <span class="label">non-negative answers (subtraction)</span>
+              <input type="checkbox" name="avoid_negative" {% if defaults.avoid_negative %}checked{% endif %}/>
+              <span class="box" aria-hidden="true"></span>
+              <span class="label">non-negative answers (subtraction)</span>
             </label>
 
             <label class="check ascii-check">
-                <input type="checkbox" name="integer_division" {% if defaults.integer_division %}checked{% endif %}/>
-                <span class="box" aria-hidden="true"></span>
-                <span class="label">integer answers (division)</span>
+              <input type="checkbox" name="integer_division" {% if defaults.integer_division %}checked{% endif %}/>
+              <span class="box" aria-hidden="true"></span>
+              <span class="label">integer answers (division)</span>
             </label>
           </div>
         </div>
@@ -281,6 +287,8 @@ HTML = r"""
         </div>
       </form>
     </div>
+
+    <div class="site-footer">© Simon Ek</div>
   </div>
 </body>
 </html>
@@ -304,6 +312,8 @@ OP_TO_INTERNAL = {
     "/": "/",
     "÷": "/",
 }
+
+WEBSITE_NAME = "mathworksheets.se"
 
 
 def defaults():
@@ -447,23 +457,91 @@ def fmt_answer(x: float) -> str:
 
 
 # ----------------------------
+# Division exactness/formatting
+# ----------------------------
+def to_fraction_from_float(x: float) -> Fraction:
+    """
+    Convert using Decimal(str(x)) so that user-entered decimals like 0.1 become exact 1/10.
+    """
+    return Fraction(Decimal(str(x)))
+
+
+def decimal_digits_needed_for_terminating_fraction(fr: Fraction) -> int | None:
+    """
+    Returns number of decimal digits needed if fr terminates.
+    Returns None if it is repeating (non-terminating).
+    """
+    fr = fr  # already reduced
+    q = fr.denominator
+
+    twos = 0
+    while q % 2 == 0:
+        q //= 2
+        twos += 1
+
+    fives = 0
+    while q % 5 == 0:
+        q //= 5
+        fives += 1
+
+    if q != 1:
+        return None
+    return max(twos, fives)
+
+
+def division_symbol_and_answer(a: float, b: float) -> Tuple[str, str]:
+    """
+    Returns (symbol, answer_str) for division.
+    symbol is '=' or '≈'.
+    Rules:
+      - if integer -> '=' + integer
+      - if terminates within <= 7 decimal digits -> '=' + exact decimal (trimmed)
+      - else -> '≈' + 4 decimals + '...'
+    """
+    # b == 0 filtered elsewhere
+    fr = to_fraction_from_float(a) / to_fraction_from_float(b)
+
+    if fr.denominator == 1:
+        return "=", str(fr.numerator)
+
+    digits = decimal_digits_needed_for_terminating_fraction(fr)
+    if digits is not None and digits <= 7:
+        val = Decimal(fr.numerator) / Decimal(fr.denominator)
+        s = f"{val:.{digits}f}".rstrip("0").rstrip(".")
+        return "=", s
+
+    val = Decimal(fr.numerator) / Decimal(fr.denominator)
+    s4 = f"{val:.4f}"
+    return "≈", f"{s4}..."
+
+
+def operation_symbol_for_problem(a: float, op_symbol: str, b: float) -> str:
+    """
+    Returns '=' or '≈' for the exercise line.
+    Only division may be '≈' (based on the same logic as answers).
+    """
+    if OP_TO_INTERNAL[op_symbol] != "/":
+        return "="
+    sym, _ = division_symbol_and_answer(a, b)
+    return sym
+
+
+# ----------------------------
 # PDF rendering (Courier header/footer)
 # ----------------------------
 def draw_header(c: canvas.Canvas, header: str):
-    """
-    Header in Courier (monospace). No date here.
-    """
     width, height = A4
     margin_left = 50
-    margin_top = 48  # a bit tighter than before
+    margin_top = 48
 
     c.setFont("Courier-Bold", 14)
     c.drawString(margin_left, height - margin_top, header)
 
 
-def draw_footer(c: canvas.Canvas, date_str: str, page_num: int):
+def draw_footer(c: canvas.Canvas, left_text: str, worksheet_no: int):
     """
-    Footer in Courier: date on left, page number on right (just the number).
+    Footer in Courier: website name on left, worksheet number on right.
+    Worksheet number is the same for corresponding problems+answers.
     """
     width, _ = A4
     margin_left = 50
@@ -471,8 +549,8 @@ def draw_footer(c: canvas.Canvas, date_str: str, page_num: int):
     y = 28
 
     c.setFont("Courier", 9)
-    c.drawString(margin_left, y, date_str)
-    c.drawRightString(width - margin_right, y, str(page_num))
+    c.drawString(margin_left, y, left_text)
+    c.drawRightString(width - margin_right, y, str(worksheet_no))
 
 
 def draw_page_problems(
@@ -480,8 +558,8 @@ def draw_page_problems(
     problems: List[Problem],
     header: str,
     numbered: bool,
-    date_str: str,
-    page_num: int,
+    left_footer: str,
+    worksheet_no: int,
 ):
     width, height = A4
     margin_left = 50
@@ -500,7 +578,7 @@ def draw_page_problems(
     col_w = usable_width / cols
 
     draw_header(c, header)
-    draw_footer(c, date_str, page_num)
+    draw_footer(c, left_footer, worksheet_no)
 
     c.setFont("Courier", 13)
 
@@ -515,7 +593,8 @@ def draw_page_problems(
             a, op_symbol, b = problems[idx]
             y = start_y - r * row_h
             prefix = f"{idx+1:2d}) " if numbered else ""
-            c.drawString(x, y, f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} = ")
+            sym = operation_symbol_for_problem(a, op_symbol, b)
+            c.drawString(x, y, f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} {sym} ")
 
 
 def draw_page_answers(
@@ -523,8 +602,8 @@ def draw_page_answers(
     problems: List[Problem],
     header: str,
     numbered: bool,
-    date_str: str,
-    page_num: int,
+    left_footer: str,
+    worksheet_no: int,
 ):
     width, height = A4
     margin_left = 50
@@ -543,7 +622,7 @@ def draw_page_answers(
     col_w = usable_width / cols
 
     draw_header(c, header)
-    draw_footer(c, date_str, page_num)
+    draw_footer(c, left_footer, worksheet_no)
 
     c.setFont("Courier", 12)
 
@@ -556,10 +635,21 @@ def draw_page_answers(
         for r in range(rows_per_col):
             idx = col * rows_per_col + r
             a, op_symbol, b = problems[idx]
-            ans = compute_answer(a, op_symbol, b)
             y = start_y - r * row_h
             prefix = f"{idx+1:2d}) " if numbered else ""
-            c.drawString(x, y, f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} = {fmt_answer(ans)}")
+
+            if OP_TO_INTERNAL[op_symbol] == "/":
+                sym, ans_str = division_symbol_and_answer(a, b)
+                c.drawString(
+                    x, y,
+                    f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} {sym} {ans_str}"
+                )
+            else:
+                ans = compute_answer(a, op_symbol, b)
+                c.drawString(
+                    x, y,
+                    f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} = {fmt_answer(ans)}"
+                )
 
 
 # ----------------------------
@@ -590,7 +680,6 @@ def safe_int(user_value: str, default_value: int, lo: int, hi: int) -> int:
 
 
 def safe_header(user_value: str, default_value: str) -> str:
-    # Treat empty/whitespace as "junk" => fallback
     if user_value is None:
         return default_value
     s = str(user_value).strip()
@@ -609,7 +698,6 @@ def build_pdf(
     header: str,
     defaults_dict: dict,
 ) -> bytes:
-    # Field-wise fallback:
     a_vals = safe_parse_number_set(a_spec, defaults_dict["a"])
     b_vals = safe_parse_number_set(b_spec, defaults_dict["b"])
     ops = safe_parse_ops(ops_spec, defaults_dict["ops"])
@@ -617,11 +705,8 @@ def build_pdf(
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
 
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    
-    current_page = 0
+    left_footer = WEBSITE_NAME
 
-    # Alternative A: problems then answers (optional) for each worksheet page
     for worksheet_idx in range(1, pages + 1):
         problems: List[Problem] = []
         for _ in range(60):
@@ -636,19 +721,17 @@ def build_pdf(
             )
 
         # Problems page
-        current_page += 1
-        header_p = header if pages == 1 else f"{header} (Set {worksheet_idx})"
         draw_page_problems(
-            c, problems, header_p, numbered, date_str, current_page
+            c, problems, header, numbered, left_footer, worksheet_idx
         )
         c.showPage()
 
         # Answers page (optional)
         if include_answers:
-            current_page += 1
-            header_a = (header + " – Answers") if pages == 1 else f"{header} – Answers (Set {worksheet_idx})"
+            # Keep header un-numbered; you can keep "– Answers" without numbering.
+            header_a = f"{header} – Answers"
             draw_page_answers(
-                c, problems, header_a, numbered, date_str, current_page
+                c, problems, header_a, numbered, left_footer, worksheet_idx
             )
             c.showPage()
 
@@ -669,7 +752,6 @@ def index():
 def generate():
     d = defaults()
 
-    # Always keep user's inputs in the form (even if we fallback in generation)
     form_defaults = {
         "a": request.form.get("a", d["a"]),
         "b": request.form.get("b", d["b"]),
@@ -683,20 +765,17 @@ def generate():
     }
 
     try:
-        # Read raw strings
         a_raw = request.form.get("a", d["a"])
         b_raw = request.form.get("b", d["b"])
         ops_raw = request.form.get("ops", d["ops"])
         pages_raw = request.form.get("pages", str(d["pages"]))
         header_raw = request.form.get("title", d["title"])
 
-        # Checkboxes
         include_answers = request.form.get("answers") is not None
         numbered = request.form.get("numbered") is not None
         avoid_negative = request.form.get("avoid_negative") is not None
         integer_division = request.form.get("integer_division") is not None
 
-        # Per-field fallback:
         pages = safe_int(pages_raw, d["pages"], lo=1, hi=100)
         header = safe_header(header_raw, d["title"])
 
@@ -722,12 +801,11 @@ def generate():
         )
 
     except Exception as e:
-        # This should now mainly trigger only for truly unexpected issues
         return render_template_string(HTML, defaults=form_defaults, error=str(e)), 400
 
 
-# if __name__ == "__main__":
-#     app.run()
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run()
+
+# if __name__ == "__main__":
+#     app.run(host="0.0.0.0", port=5000, debug=True)

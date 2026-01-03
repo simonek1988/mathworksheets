@@ -88,8 +88,8 @@ Repeated operators act as weights (e.g. “+++++-/*” favors addition).
 - Each page contains 60 problems
 - If “answers” is checked:
   - Each worksheet page is followed by its answers page
-- Maximum pages: 200
-  - With answers enabled → up to 400 PDF pages
+- Maximum pages: 100
+  - With answers enabled → up to 200 PDF pages
 
 ---
 
