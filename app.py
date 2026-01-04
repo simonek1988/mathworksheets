@@ -233,7 +233,7 @@ HTML = r"""
         <div>
           <label for="ops">Operators</label>
           <input id="ops" name="ops" type="text" value="{{defaults.ops}}" />
-          <div class="hint">Examples: <code>+</code>, <code>+-*</code>, <code>/ ×</code> <code>•,÷</code></div>
+          <div class="hint">Examples: <code>+</code>, <code>+-*</code>, <code>/ × ·</code> <code>•,÷</code></div>
         </div>
 
         <div>
@@ -303,13 +303,14 @@ RANGE_RE = re.compile(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*-\s*([+-]?(?:\d+(?:
 Problem = Tuple[float, str, float]  # (a, op_symbol, b)
 SAME_OP_TRIES = 10
 
-OP_SYMBOLS = {"+", "-", "*", "/", "•", "×", "÷"}
+OP_SYMBOLS = {"+", "-", "*", "/", "•", "×", "·", "÷"}
 OP_TO_INTERNAL = {
     "+": "+",
     "-": "-",
     "*": "*",
     "•": "*",
     "×": "*",
+    "·": "*",
     "/": "/",
     "÷": "/",
 }
