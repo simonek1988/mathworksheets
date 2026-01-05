@@ -4,6 +4,8 @@
 import io
 import random
 import re
+import os
+import redis
 from datetime import datetime
 from decimal import Decimal
 from fractions import Fraction
@@ -191,9 +193,21 @@ HTML = r"""
     }
 
     .site-footer{
-      margin-top: 18px;
-      color: var(--muted);
-      font-size: 12px;
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .counter{
+        color: var(--bg);     /* invisible */
+        user-select: text;
+        cursor: text;
+    }
+    .counter::selection{
+        color: #fff;
+        background: rgba(255,255,255,.18);
     }
 
     code{
@@ -294,7 +308,10 @@ HTML = r"""
       </form>
     </div>
 
-    <div class="site-footer">© Simon Ek</div>
+    <div class="site-footer">
+        <span>© Simon Ek</span>
+        <span class="counter" title="Highlight to reveal">downloads: {{defaults.downloads}}</span>
+    </div>
   </div>
 </body>
 </html>
@@ -325,6 +342,35 @@ OP_TO_INTERNAL = {
 
 WEBSITE_NAME = "mathworksheets.se"
 ROUND_KEY_DP = 12  # canonicalization to avoid float-representation surprises (see note below)
+
+COUNTER_KEY = "pdf_downloads"
+
+def get_redis_client():
+    url = os.getenv("UPSTASH_REDIS_URL", "").strip()
+    if not url:
+        return None
+    # Upstash uses TLS => rediss://
+    return redis.Redis.from_url(url, decode_responses=True)
+
+def increment_pdf_downloads() -> None:
+    r = get_redis_client()
+    if not r:
+        return
+    try:
+        r.incr(COUNTER_KEY)
+    except Exception:
+        # Never break PDF generation because of counter issues
+        pass
+
+def get_pdf_downloads() -> int:
+    r = get_redis_client()
+    if not r:
+        return 0
+    try:
+        v = r.get(COUNTER_KEY)
+        return int(v) if v is not None else 0
+    except Exception:
+        return 0
 
 
 def defaults():
@@ -824,8 +870,9 @@ def build_pdf(
 # ----------------------------
 @app.get("/")
 def index():
-    return render_template_string(HTML, defaults=defaults(), error=None)
-
+    d = defaults()
+    d["downloads"] = get_pdf_downloads()
+    return render_template_string(HTML, defaults=d, error=None)
 
 @app.post("/generate")
 def generate():
@@ -874,7 +921,7 @@ def generate():
             header=header,
             defaults_dict=d,
         )
-
+        increment_pdf_downloads()
         filename = f"worksheet_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         return send_file(
             io.BytesIO(pdf_bytes),
@@ -884,6 +931,7 @@ def generate():
         )
 
     except Exception as e:
+        form_defaults["downloads"] = get_pdf_downloads()
         return render_template_string(HTML, defaults=form_defaults, error=str(e)), 400
 
 
