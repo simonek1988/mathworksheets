@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from decimal import Decimal
 from fractions import Fraction
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Set
 
 from flask import Flask, request, render_template_string, send_file
 from reportlab.lib.pagesizes import A4
@@ -237,14 +237,20 @@ HTML = r"""
         </div>
 
         <div>
+          <label for="ans">Allowed answers</label>
+          <input id="ans" name="ans" type="text" value="{{defaults.ans}}" />
+          <div class="hint">Examples: <code>1-10</code> <code> </code>(leave empty for no constraint)</div>
+        </div>
+
+        <div>
+          <label for="title">Header</label>
+          <input id="title" name="title" type="text" value="{{defaults.title}}" />
+        </div>
+
+        <div>
           <label for="pages">Number of pages</label>
           <input id="pages" name="pages" type="number" min="1" max="10" value="{{defaults.pages}}" />
           <div class="hint">Each page contains 60 problems.</div>
-        </div>
-
-        <div class="full">
-          <label for="title">Header</label>
-          <input id="title" name="title" type="text" value="{{defaults.title}}" />
         </div>
 
         <div class="full">
@@ -301,7 +307,9 @@ NUM_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 RANGE_RE = re.compile(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*-\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$")
 
 Problem = Tuple[float, str, float]  # (a, op_symbol, b)
+
 SAME_OP_TRIES = 10
+TRIES_PER_PROBLEM = 50_000  # global budget to avoid "running forever"
 
 OP_SYMBOLS = {"+", "-", "*", "/", "•", "×", "·", "÷"}
 OP_TO_INTERNAL = {
@@ -316,6 +324,7 @@ OP_TO_INTERNAL = {
 }
 
 WEBSITE_NAME = "mathworksheets.se"
+ROUND_KEY_DP = 12  # canonicalization to avoid float-representation surprises (see note below)
 
 
 def defaults():
@@ -323,6 +332,7 @@ def defaults():
         "a": "0-10",
         "b": "0-10",
         "ops": "+",
+        "ans": "",  # empty => no answer constraint
         "pages": 1,
         "answers": True,
         "numbered": True,
@@ -341,6 +351,18 @@ def parse_number(token: str) -> float:
 
 def is_int_like(x: float, tol: float = 1e-12) -> bool:
     return abs(x - round(x)) <= tol
+
+
+def key12(x: float) -> float:
+    """
+    Canonicalize floats so membership checks are stable.
+
+    Why: 0.1 isn't exactly representable as a binary float. Even if the "math"
+    says something should be 0.3, the float may be 0.30000000000000004 and
+    a direct equality check can fail. Rounding to a fixed precision makes
+    membership checks behave like users expect for "human-entered decimals".
+    """
+    return round(float(x), ROUND_KEY_DP)
 
 
 def parse_number_set(spec: str) -> List[float]:
@@ -368,10 +390,10 @@ def parse_number_set(spec: str) -> List[float]:
     seen = set()
     uniq: List[float] = []
     for x in out:
-        key = round(float(x), 12)
-        if key in seen:
+        k = key12(x)
+        if k in seen:
             continue
-        seen.add(key)
+        seen.add(k)
         uniq.append(float(x))
 
     if not uniq:
@@ -417,50 +439,75 @@ def compute_answer(a: float, op_symbol: str, b: float) -> float:
     raise ValueError("Unknown operator")
 
 
+def build_answer_constraint(spec: str) -> Optional[Set[float]]:
+    """
+    Parse allowed answers into a set for fast membership checks.
+    Empty spec => None (no constraint).
+    Invalid spec => None (field-level fallback behavior).
+    """
+    s = (spec or "").strip()
+    if not s:
+        return None
+    try:
+        vals = parse_number_set(s)
+        return {key12(v) for v in vals}
+    except Exception:
+        # If the field contains junk, behave like you requested: use default (no constraint)
+        return None
+
+
 def pick_problem(
     a_vals: List[float],
     b_vals: List[float],
     ops: List[str],
     avoid_negative: bool,
     integer_division: bool,
-    tries: int = 50_000,
-    same_op_tries: int = 10,
+    ans_set: Optional[Set[float]],
+    tries: int = TRIES_PER_PROBLEM,
+    same_op_tries: int = SAME_OP_TRIES,
 ) -> Problem:
     """
-    Mitigate operator imbalance when constraints discard many candidates for a given op
-    (e.g. integer division).
+    Generate a single valid problem (a, op_symbol, b).
 
-    Strategy:
-      1) Pick an operator according to ops weights (ops list may contain duplicates).
-      2) Try `same_op_tries` times to find a valid (a, b) for that operator.
-      3) If not found, fall back to "any operator" attempts for the remaining budget.
+    Mitigates operator imbalance by trying `same_op_tries` attempts within the
+    initially-chosen operator before falling back to "any operator".
 
-    This keeps the realized distribution closer to requested operator weights,
-    while still guaranteeing progress.
+    Also supports optional answer constraint: computed answer must be in `ans_set`.
     """
+
     if not ops:
         ops = ["+"]
 
     def valid(a: float, op_symbol: str, b: float) -> bool:
         internal = OP_TO_INTERNAL[op_symbol]
+
         if internal == "/":
-            return division_ok(a, b, require_int=integer_division)
+            if not division_ok(a, b, require_int=integer_division):
+                return False
+
         if internal == "-" and avoid_negative:
-            return (a - b) >= 0
+            if (a - b) < 0:
+                return False
+
+        if ans_set is not None:
+            ans = compute_answer(a, op_symbol, b)
+            if key12(ans) not in ans_set:
+                return False
+
         return True
 
-    # Step 1: choose the intended operator (weighted by duplicates in `ops`)
     op_symbol = random.choice(ops)
 
-    # Step 2: try to satisfy constraints within the same operator a few times
-    for _ in range(min(same_op_tries, tries)):
+    # Try within the chosen operator first
+    budget_same = min(same_op_tries, tries)
+    for _ in range(budget_same):
         a = random.choice(a_vals)
         b = random.choice(b_vals)
         if valid(a, op_symbol, b):
             return a, op_symbol, b
 
-    # Step 3: fallback to any operator (keeps termination robust)
-    remaining = tries - min(same_op_tries, tries)
+    # Fallback to any operator
+    remaining = tries - budget_same
     for _ in range(max(0, remaining)):
         op2 = random.choice(ops)
         a = random.choice(a_vals)
@@ -470,7 +517,7 @@ def pick_problem(
 
     raise RuntimeError(
         "Could not generate problems with these constraints.\n"
-        "Try widening a/b, disabling integer division, or removing some operators."
+        "Try widening a/b, disabling integer division, relaxing answer constraint, or removing some operators."
     )
 
 
@@ -501,7 +548,6 @@ def decimal_digits_needed_for_terminating_fraction(fr: Fraction) -> int | None:
     Returns number of decimal digits needed if fr terminates.
     Returns None if it is repeating (non-terminating).
     """
-    fr = fr  # already reduced
     q = fr.denominator
 
     twos = 0
@@ -528,7 +574,6 @@ def division_symbol_and_answer(a: float, b: float) -> Tuple[str, str]:
       - if terminates within <= 7 decimal digits -> '=' + exact decimal (trimmed)
       - else -> '≈' + 4 decimals + '...'
     """
-    # b == 0 filtered elsewhere
     fr = to_fraction_from_float(a) / to_fraction_from_float(b)
 
     if fr.denominator == 1:
@@ -560,7 +605,7 @@ def operation_symbol_for_problem(a: float, op_symbol: str, b: float) -> str:
 # PDF rendering (Courier header/footer)
 # ----------------------------
 def draw_header(c: canvas.Canvas, header: str):
-    width, height = A4
+    _, height = A4
     margin_left = 50
     margin_top = 48
 
@@ -671,14 +716,16 @@ def draw_page_answers(
             if OP_TO_INTERNAL[op_symbol] == "/":
                 sym, ans_str = division_symbol_and_answer(a, b)
                 c.drawString(
-                    x, y,
-                    f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} {sym} {ans_str}"
+                    x,
+                    y,
+                    f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} {sym} {ans_str}",
                 )
             else:
                 ans = compute_answer(a, op_symbol, b)
                 c.drawString(
-                    x, y,
-                    f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} = {fmt_answer(ans)}"
+                    x,
+                    y,
+                    f"{prefix}{fmt_num(a)} {op_symbol} {fmt_num(b)} = {fmt_answer(ans)}",
                 )
 
 
@@ -720,6 +767,7 @@ def build_pdf(
     a_spec: str,
     b_spec: str,
     ops_spec: str,
+    ans_spec: str,
     pages: int,
     include_answers: bool,
     numbered: bool,
@@ -731,6 +779,9 @@ def build_pdf(
     a_vals = safe_parse_number_set(a_spec, defaults_dict["a"])
     b_vals = safe_parse_number_set(b_spec, defaults_dict["b"])
     ops = safe_parse_ops(ops_spec, defaults_dict["ops"])
+
+    # If field is junk/empty => no constraint (your requested behavior)
+    ans_set = build_answer_constraint(ans_spec)
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -747,23 +798,20 @@ def build_pdf(
                     ops=ops,
                     avoid_negative=avoid_negative,
                     integer_division=integer_division,
-                    same_op_tries=SAME_OP_TRIES
+                    ans_set=ans_set,
+                    tries=TRIES_PER_PROBLEM,
+                    same_op_tries=SAME_OP_TRIES,
                 )
             )
 
         # Problems page
-        draw_page_problems(
-            c, problems, header, numbered, left_footer, worksheet_idx
-        )
+        draw_page_problems(c, problems, header, numbered, left_footer, worksheet_idx)
         c.showPage()
 
         # Answers page (optional)
         if include_answers:
-            # Keep header un-numbered; you can keep "– Answers" without numbering.
             header_a = f"{header} – Answers"
-            draw_page_answers(
-                c, problems, header_a, numbered, left_footer, worksheet_idx
-            )
+            draw_page_answers(c, problems, header_a, numbered, left_footer, worksheet_idx)
             c.showPage()
 
     c.save()
@@ -783,10 +831,12 @@ def index():
 def generate():
     d = defaults()
 
+    # Preserve user inputs on error
     form_defaults = {
         "a": request.form.get("a", d["a"]),
         "b": request.form.get("b", d["b"]),
         "ops": request.form.get("ops", d["ops"]),
+        "ans": request.form.get("ans", d["ans"]),
         "pages": request.form.get("pages", d["pages"]),
         "answers": request.form.get("answers") is not None,
         "numbered": request.form.get("numbered") is not None,
@@ -799,6 +849,7 @@ def generate():
         a_raw = request.form.get("a", d["a"])
         b_raw = request.form.get("b", d["b"])
         ops_raw = request.form.get("ops", d["ops"])
+        ans_raw = request.form.get("ans", d["ans"])
         pages_raw = request.form.get("pages", str(d["pages"]))
         header_raw = request.form.get("title", d["title"])
 
@@ -814,6 +865,7 @@ def generate():
             a_spec=a_raw,
             b_spec=b_raw,
             ops_spec=ops_raw,
+            ans_spec=ans_raw,
             pages=pages,
             include_answers=include_answers,
             numbered=numbered,
@@ -835,8 +887,8 @@ def generate():
         return render_template_string(HTML, defaults=form_defaults, error=str(e)), 400
 
 
-if __name__ == "__main__":
-    app.run()
-
 # if __name__ == "__main__":
-#     app.run(host="0.0.0.0", port=5000, debug=True)
+#     app.run()
+
+if __name__ == "__main__": 
+    app.run(host="0.0.0.0", port=5000, debug=True)
