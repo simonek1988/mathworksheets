@@ -27,6 +27,10 @@ HTML = r"""
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Math worksheet generator</title>
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <meta name="theme-color" content="#05142c">
   <style>
     :root{
       --bg: #05142c;         /* dark blue */
@@ -935,8 +939,8 @@ def generate():
         return render_template_string(HTML, defaults=form_defaults, error=str(e)), 400
 
 
-if __name__ == "__main__":
-    app.run()
+# if __name__ == "__main__":
+#     app.run()
 
-# if __name__ == "__main__": 
-#     app.run(host="0.0.0.0", port=5000, debug=True)
+if __name__ == "__main__": 
+    app.run(host="0.0.0.0", port=5000, debug=True)
