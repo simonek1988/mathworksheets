@@ -286,15 +286,15 @@ HTML = r"""
             </label>
 
             <label class="check ascii-check">
-              <input type="checkbox" name="avoid_negative" {% if defaults.avoid_negative %}checked{% endif %}/>
+              <input type="checkbox" name="nonnegative_answers" {% if defaults.nonnegative_answers %}checked{% endif %}/>
               <span class="box" aria-hidden="true"></span>
-              <span class="label">non-negative answers (subtraction)</span>
+              <span class="label">non-negative answers</span>
             </label>
 
             <label class="check ascii-check">
-              <input type="checkbox" name="integer_division" {% if defaults.integer_division %}checked{% endif %}/>
+              <input type="checkbox" name="integer_answers" {% if defaults.integer_answers %}checked{% endif %}/>
               <span class="box" aria-hidden="true"></span>
-              <span class="label">integer answers (division)</span>
+              <span class="label">integer answers</span>
             </label>
           </div>
         </div>
@@ -386,8 +386,8 @@ def defaults():
         "pages": 1,
         "answers": True,
         "numbered": True,
-        "avoid_negative": False,
-        "integer_division": True,
+        "nonnegative_answers": False,
+        "integer_answers": True,
         "title": "Math worksheet",
     }
 
@@ -475,6 +475,16 @@ def division_ok(a: float, b: float, require_int: bool, tol: float = 1e-9) -> boo
     q = a / b
     return abs(q - round(q)) <= tol
 
+def integer_answer_ok(a: float, op_symbol: str, b: float, require_int: bool, tol: float = 1e-9) -> bool:
+    if not require_int:
+        return True
+    internal = OP_TO_INTERNAL[op_symbol]
+    if internal == "/" and b == 0:
+        return False
+    ans = compute_answer(a, op_symbol, b)
+    return abs(ans - round(ans)) <= tol
+
+
 
 def compute_answer(a: float, op_symbol: str, b: float) -> float:
     op = OP_TO_INTERNAL[op_symbol]
@@ -510,8 +520,8 @@ def pick_problem(
     a_vals: List[float],
     b_vals: List[float],
     ops: List[str],
-    avoid_negative: bool,
-    integer_division: bool,
+    nonnegative_answers: bool,
+    integer_answers: bool,
     ans_set: Optional[Set[float]],
     tries: int = TRIES_PER_PROBLEM,
     same_op_tries: int = SAME_OP_TRIES,
@@ -531,16 +541,20 @@ def pick_problem(
     def valid(a: float, op_symbol: str, b: float) -> bool:
         internal = OP_TO_INTERNAL[op_symbol]
 
-        if internal == "/":
-            if not division_ok(a, b, require_int=integer_division):
-                return False
+        if internal == "/" and b == 0:
+            return False
 
-        if internal == "-" and avoid_negative:
-            if (a - b) < 0:
+        if not integer_answer_ok(a, op_symbol, b, require_int=integer_answers):
+            return False
+
+
+        if nonnegative_answers:
+            ans = compute_answer(a, op_symbol, b)
+            if ans < 0:
                 return False
 
         if ans_set is not None:
-            ans = compute_answer(a, op_symbol, b)
+            ans = constraint_value_for_answer(a, op_symbol, b)
             if key12(ans) not in ans_set:
                 return False
 
@@ -649,6 +663,36 @@ def operation_symbol_for_problem(a: float, op_symbol: str, b: float) -> str:
         return "="
     sym, _ = division_symbol_and_answer(a, b)
     return sym
+
+def constraint_value_for_answer(a: float, op_symbol: str, b: float) -> float:
+    """
+    Return the numeric value used for answer-constraint membership checks.
+
+    For +,-,*: exact float answer.
+    For division:
+      - if exact integer => that integer
+      - if terminating within <=7 decimals => exact decimal value
+      - else (≈ case) => 4-decimal approximation (the value shown before '...')
+    """
+    if OP_TO_INTERNAL[op_symbol] != "/":
+        return compute_answer(a, op_symbol, b)
+
+    # Division: use the same logic as display
+    fr = to_fraction_from_float(a) / to_fraction_from_float(b)
+
+    if fr.denominator == 1:
+        return float(fr.numerator)
+
+    digits = decimal_digits_needed_for_terminating_fraction(fr)
+    if digits is not None and digits <= 7:
+        # exact terminating value
+        val = Decimal(fr.numerator) / Decimal(fr.denominator)
+        return float(val)
+
+    # repeating / too many digits => use 4-decimal approximation (like display)
+    val = Decimal(fr.numerator) / Decimal(fr.denominator)
+    return float(val.quantize(Decimal("0.0001")))
+
 
 
 # ----------------------------
@@ -821,8 +865,8 @@ def build_pdf(
     pages: int,
     include_answers: bool,
     numbered: bool,
-    avoid_negative: bool,
-    integer_division: bool,
+    nonnegative_answers: bool,
+    integer_answers: bool,
     header: str,
     defaults_dict: dict,
 ) -> bytes:
@@ -846,8 +890,8 @@ def build_pdf(
                     a_vals=a_vals,
                     b_vals=b_vals,
                     ops=ops,
-                    avoid_negative=avoid_negative,
-                    integer_division=integer_division,
+                    nonnegative_answers=nonnegative_answers,
+                    integer_answers=integer_answers,
                     ans_set=ans_set,
                     tries=TRIES_PER_PROBLEM,
                     same_op_tries=SAME_OP_TRIES,
@@ -891,8 +935,8 @@ def generate():
         "pages": request.form.get("pages", d["pages"]),
         "answers": request.form.get("answers") is not None,
         "numbered": request.form.get("numbered") is not None,
-        "avoid_negative": request.form.get("avoid_negative") is not None,
-        "integer_division": request.form.get("integer_division") is not None,
+        "nonnegative_answers": request.form.get("nonnegative_answers") is not None,
+        "integer_answers": request.form.get("integer_answers") is not None,
         "title": request.form.get("title", d["title"]),
     }
 
@@ -906,8 +950,8 @@ def generate():
 
         include_answers = request.form.get("answers") is not None
         numbered = request.form.get("numbered") is not None
-        avoid_negative = request.form.get("avoid_negative") is not None
-        integer_division = request.form.get("integer_division") is not None
+        nonnegative_answers = request.form.get("nonnegative_answers") is not None
+        integer_answers = request.form.get("integer_answers") is not None
 
         pages = safe_int(pages_raw, d["pages"], lo=1, hi=10)
         header = safe_header(header_raw, d["title"])
@@ -920,8 +964,8 @@ def generate():
             pages=pages,
             include_answers=include_answers,
             numbered=numbered,
-            avoid_negative=avoid_negative,
-            integer_division=integer_division,
+            nonnegative_answers=nonnegative_answers,
+            integer_answers=integer_answers,
             header=header,
             defaults_dict=d,
         )
